@@ -9,10 +9,17 @@ import (
 	"github.com/justinas/alice"
 	"github.com/saurabhdhingra/go-csrf/db"
 	"github.com/saurabhdhingra/go-csrf/server/middleware/myJwt"
+	"github.com/saurabhdhingra/go-csrf/templates"
 )
 
 func NewHandler() http.Handler {
-	return alice.New(recoverHandler, authHandler).ThenFunc(logicHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/static/style.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		http.ServeFile(w, r, "templates/style.css")
+	})
+	mux.Handle("/", alice.New(recoverHandler, authHandler).ThenFunc(logicHandler))
+	return mux
 }
 
 func recoverHandler(next http.Handler) http.Handler {
@@ -78,7 +85,7 @@ func authHandler(next http.Handler) http.Handler {
 
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			setAuthAndRefreshCookies(&w, authTokenString, refreshTokenString)
-			w.Header().Set("X-CSRF-Token", csrfSecret)
+			setCsrfCookie(&w, csrfSecret)
 		default:
 		}
 		next.ServeHTTP(w, r)
@@ -90,27 +97,18 @@ func logicHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/restricted":
 		csrfSecret := grabCsrfFromReq(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"csrf_token": "` + csrfSecret + `", "message": "Hello"}`))
+		data := struct {
+			CsrfToken string
+			Message   string
+		}{
+			CsrfToken: csrfSecret,
+			Message:   "Hello! You are now authenticated with CSRF protection.",
+		}
+		templates.RenderTemplate(w, "restricted", data)
 	case "/login":
 		switch r.Method {
 		case "GET":
-			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte(`
-				<!DOCTYPE html>
-				<html>
-				<head><title>Login</title></head>
-				<body>
-					<h1>Login</h1>
-					<form method="POST" action="/login">
-						<input type="text" name="username" placeholder="Username" required><br>
-						<input type="password" name="password" placeholder="Password" required><br>
-						<input type="submit" value="Login">
-					</form>
-					<a href="/register">Register</a>
-				</body>
-				</html>
-			`))
+			templates.RenderTemplate(w, "login", nil)
 		case "POST":
 			r.ParseForm()
 			log.Println(r.Form)
@@ -131,7 +129,7 @@ func logicHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			setAuthAndRefreshCookies(&w, authTokenString, refreshTokenString)
-			w.Header().Set("X-CSRF-Token", csrfSecret)
+			setCsrfCookie(&w, csrfSecret)
 			http.Redirect(w, r, "/restricted", 302)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -139,22 +137,7 @@ func logicHandler(w http.ResponseWriter, r *http.Request) {
 	case "/register":
 		switch r.Method {
 		case "GET":
-			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte(`
-				<!DOCTYPE html>
-				<html>
-				<head><title>Register</title></head>
-				<body>
-					<h1>Register</h1>
-					<form method="POST" action="/register">
-						<input type="text" name="username" placeholder="Username" required><br>
-						<input type="password" name="password" placeholder="Password" required><br>
-						<input type="submit" value="Register">
-					</form>
-					<a href="/login">Login</a>
-				</body>
-				</html>
-			`))
+			templates.RenderTemplate(w, "register", nil)
 		case "POST":
 			r.ParseForm()
 			log.Println(r.Form)
@@ -183,7 +166,7 @@ func logicHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			setAuthAndRefreshCookies(&w, authTokenString, refreshTokenString)
-			w.Header().Set("X-CSRF-Token", csrfSecret)
+			setCsrfCookie(&w, csrfSecret)
 			http.Redirect(w, r, "/restricted", 302)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -220,6 +203,15 @@ func nullifyTokenCookies(w *http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(*w, &refreshCookie)
 
+	// Clear CSRF cookie
+	csrfCookie := http.Cookie{
+		Name:    "CSRFToken",
+		Value:   "",
+		Expires: time.Now().Add(-1000 * time.Hour),
+		Path:    "/",
+	}
+	http.SetCookie(*w, &csrfCookie)
+
 	RefreshCookie, refreshErr := r.Cookie("RefreshToken")
 	if refreshErr == http.ErrNoCookie {
 		return
@@ -250,12 +242,34 @@ func setAuthAndRefreshCookies(w *http.ResponseWriter, authToken string, refreshT
 	http.SetCookie(*w, &refreshCookie)
 }
 
-func grabCsrfFromReq(r *http.Request) string {
-	csrfFromForm := r.FormValue("X-CSRF-Token")
+func setCsrfCookie(w *http.ResponseWriter, csrfToken string) {
+	csrfCookie := http.Cookie{
+		Name:     "CSRFToken",
+		Value:    csrfToken,
+		HttpOnly: false, // Allow JavaScript access for AJAX requests
+		Path:     "/",
+	}
+	http.SetCookie(*w, &csrfCookie)
+}
 
+func grabCsrfFromReq(r *http.Request) string {
+	// First check form data
+	csrfFromForm := r.FormValue("X-CSRF-Token")
 	if csrfFromForm != "" {
 		return csrfFromForm
-	} else {
-		return r.Header.Get("X-CSRF-Token")
 	}
+
+	// Then check headers
+	csrfFromHeader := r.Header.Get("X-CSRF-Token")
+	if csrfFromHeader != "" {
+		return csrfFromHeader
+	}
+
+	// Finally check cookies
+	csrfCookie, err := r.Cookie("CSRFToken")
+	if err == nil && csrfCookie.Value != "" {
+		return csrfCookie.Value
+	}
+
+	return ""
 }
