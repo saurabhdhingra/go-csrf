@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"log"
+
 	"github.com/saurabhdhingra/go-csrf/db/models"
 	"github.com/saurabhdhingra/go-csrf/randomstrings"
 	"golang.org/x/crypto/bcrypt"
@@ -39,17 +40,22 @@ func StoreUser(username string, password string, role string) (uuid string, err 
 	return uuid, err
 }
 
-func DeleteUser(uuid string)(models.User, error) {
+func DeleteUser(uuid string) (models.User, error) {
+	user, exists := users[uuid]
+	if !exists {
+		return models.User{}, errors.New("User not found")
+	}
 	delete(users, uuid)
+	return user, nil
 }
 
-func FetchUserById(uuid string)(models.User, error) {
+func FetchUserById(uuid string) (models.User, error) {
 	u := users[uuid]
 	blankUser := models.User{}
 
 	if blankUser != u {
 		return u, nil
-	}else{
+	} else {
 		return u, errors.New("User not found that matches given uuid")
 	}
 }
@@ -64,9 +70,9 @@ func FetchUserByUsername(username string) (models.User, string, error) {
 	return models.User{}, "", errors.New("User not found that matches username.")
 }
 
-func StoreRefreshToken()(jti string, err error){
-	jti, err = randomstrings.GenerateRandomString(32);
-	if err != nil{
+func StoreRefreshToken() (jti string, err error) {
+	jti, err = randomstrings.GenerateRandomString(32)
+	if err != nil {
 		return jti, err
 	}
 
@@ -79,31 +85,31 @@ func StoreRefreshToken()(jti string, err error){
 
 	refreshTokens[jti] = "valid"
 
-	return jti, err 
+	return jti, err
 }
 
 func DeleteRefreshToken(jti string) {
 	delete(refreshTokens, jti)
 }
 
-func CheckReffreshToken(jti string) bool {
+func CheckRefreshToken(jti string) bool {
 	return refreshTokens[jti] != ""
 }
 
-func LogUserIn(username string, password string) (models.User, string, error){
+func LogUserIn(username string, password string) (models.User, string, error) {
 	user, uuid, userErr := FetchUserByUsername(username)
 	log.Println(user, uuid, userErr)
 	if userErr != nil {
-		return  models.User{}, "", userErr
+		return models.User{}, "", userErr
 	}
 	return user, uuid, checkPasswordAgainstHash(user.PasswordHash, password)
 }
 
-func generateBcryptHash(password string)(string, error) {
+func generateBcryptHash(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(hash[:]), err
 }
 
-func checkPasswordAgainstHash(hash string, password string) error{
+func checkPasswordAgainstHash(hash string, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }

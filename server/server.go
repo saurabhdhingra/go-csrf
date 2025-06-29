@@ -1,9 +1,10 @@
 package server
 
-import(
+import (
 	"log"
 	"net/http"
-	"github.com/saurabhdhingra/go-csrf/middleware"
+
+	"github.com/saurabhdhingra/go-csrf/server/middleware"
 )
 
 func StartServer(hostname string, port string) error {
